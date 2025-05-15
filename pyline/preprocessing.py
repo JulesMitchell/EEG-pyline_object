@@ -92,7 +92,8 @@ class PylinePreprocessing:
         if autoselect:
             eog_indices = ica.find_bads_eog(data_copy)
             ica.exclude = eog_indices[0]
-            ica.apply(data_copy)
+            
+        ica.apply(data_copy)
 
         return ica, data_copy
 
