@@ -4,6 +4,7 @@ import warnings
 import numpy as np
 import mne
 import matplotlib.pyplot as plt
+from scipy.stats import norm
 import seaborn as sns
 import numpy as np
 from scipy import stats
@@ -41,7 +42,7 @@ class PylineAnalysis:
         equal_epochs = equal_epochs.equalize_event_counts(condition_comp)
         return equal_epochs
     
-    def create_evoked (self, data, channel = None):
+    def create_evoked (self, data, channel = None): # Remove
         """
         Create evoked responses.
 
@@ -59,7 +60,7 @@ class PylineAnalysis:
             print("Evoked object created across all epochs")
         return evoked
 
-    def evoked_compare(self, data, comparator):
+    def evoked_compare(self, data, comparator):# Remove
         """
         Plot evoked time series for two conditions. These are saved in list prior to passing to the plotting function. 
         Condition abels are taken from the .comment attributes of each evoked object.
@@ -144,7 +145,7 @@ class PylineAnalysis:
         
         return d_prime
 
-    def extract_trial_data(self, dataframe, data, bids, sub, params, task = None):
+    def extract_trial_data(self, dataframe, data, entry, params, task = None):
         """
         Args:
             dataframe (pandas.DataFrame): DataFrame to store the results.
@@ -180,7 +181,7 @@ class PylineAnalysis:
             AB_commission_events = [] # A* really
             AB_commission_RT = [] # A* really
 
-            print('\n Counting trials for {}: {} - {} ({} / {})'.format(task, bids[sub]['subject'], bids[sub]['session'], sub, len(bids)))
+            print('\n Counting trials for {}: {} - {}'.format(task, entry['subject'], entry['session']))
 
             # Calculate total target (AX), non-target (BX/*X), A* (AB), B and total of each (for calculating relative %s).
             total_AX = np.sum(data.events[:, 2] == params.event_dict[task]['AX'])
@@ -241,9 +242,9 @@ class PylineAnalysis:
 
             # Convert to np.array
             temp_dataframe = pd.DataFrame({
-                'Timepoint': bids[sub]['session'],
+                'Timepoint': entry['session'],
                 'Task': task,
-                'Group': bids[sub]['group'],
+                'Group': entry['group'],
                 'Total AX': total_AX,
                 'AX successes': hits,
                 'AX omissions': misses,
@@ -263,7 +264,7 @@ class PylineAnalysis:
                 'Median_AX_RT': np.median(AX_success_RT) if len(AX_success_RT) > 0 else 0,
                 'Median_BX_RT': np.median(BX_commission_RT) if len(BX_commission_RT) > 0 else 0,
                 'Median_A*_RT': np.median(AB_commission_RT) if len(AB_commission_RT) > 0 else 0,
-            }, index=[bids[sub]['subject']])
+            }, index=[entry['subject']])
 
             dataframe = pd.concat([dataframe, temp_dataframe])
 
@@ -276,7 +277,7 @@ class PylineAnalysis:
             commission_events = []
             commission_RT = []
 
-            print('\n Counting trials for {}: {} - {} ({} / {})'.format(task, bids[sub]['subject'], bids[sub]['session'], sub, len(bids)))
+            print('\n Counting trials for {}: {} - {}'.format(task, entry['subject'], entry['session']))
 
             total_targets = 0
             total_nontargets = np.sum(data.events[:, 2] == 2)
@@ -316,9 +317,9 @@ class PylineAnalysis:
 
             # Convert to np.array
             temp_dataframe = pd.DataFrame({
-                'Timepoint': bids[sub]['session'],
+                'Timepoint': entry['session'],
                 'Task': task,
-                'Group': bids[sub]['group'],
+                'Group': entry['group'],
                 'Total targets': total_targets,
                 'Target successes': hits,
                 'Omissions': misses,
@@ -330,7 +331,7 @@ class PylineAnalysis:
                 'P(standard)': total_nontargets /(total_targets + total_nontargets),
                 'Avg_Successful_RT': np.median(success_RT) if len(success_RT) > 0 else 0,
                 'Avg_Commission_RT': np.median(commission_RT) if len(commission_RT) > 0 else 0
-            }, index=[bids[sub]['subject']])
+            }, index=[entry['subject']])
 
             dataframe = pd.concat([dataframe, temp_dataframe])
 
@@ -775,6 +776,79 @@ class PylineAnalysis:
 
         return dataframe, bids
     
+    # Update: Jules added function to re-run erp analysis manually for any rows missing data. 
+    # def rerun_missing_erp_analysis(self, dataframe, manage, analysis, params, trial_types, response_status, channels, evoked_file_extension, str_to_extract, plot=False):
+    #     """
+    #     Re-run ERP analysis for rows with missing ERP values in the dataframe.
+        
+    #     Args:
+    #         dataframe (pd.DataFrame): The dataframe containing ERP results, with possible missing values.
+    #         manage: The object responsible for managing BIDS and EEG data.
+    #         analysis: The object responsible for ERP analysis.
+    #         params: The parameter object containing ERP settings.
+    #         trial_types (list): List of trial types to analyze.
+    #         response_status: Information about response classification (e.g., correct/incorrect).
+    #         channels (list): List of channels to analyze.
+    #         evoked_file_extension (str): The file extension for the evoked data.
+    #         str_to_extract (str): A specific string to extract from the BIDS data.
+    #         plot (bool): Whether to plot the ERP analysis results.
+            
+    #     Returns:
+    #         pd.DataFrame: The updated dataframe with missing values re-analyzed.
+    #     """
+        
+    #     # Identify rows with missing values in the ERP dataframe
+    #     missing_rows = dataframe[dataframe.isnull().any(axis=1)]
+        
+    #     if missing_rows.empty:
+    #         print("No missing values found in the dataframe.")
+    #         return dataframe
+
+    #     print(f"Found {len(missing_rows)} rows with missing values. Re-running ERP analysis for these rows...")
+        
+    #     # Loop through each trial type
+    #     for trial_type in trial_types:
+    #         # Fetch BIDS data for the current trial type
+    #         bids = manage.get_bids(extensions=[f'_{trial_type}{evoked_file_extension}'], str_to_extract=[str_to_extract], modalities=['eeg'])
+    #         manage.add_classifier(bids, response_status, designation=[1, 0])
+            
+    #         for entry in bids:
+    #             subject = entry['subject']
+    #             session = entry['session']
+    #             task = entry['task']
+    #             response = entry['group']
+                
+    #             # Filter for the rows that match this subject, session, trial type, and channel
+    #             for channel in channels:
+    #                 # Check if there's a missing row for this subject, session, trial type, and channel
+    #                 missing_row = missing_rows[
+    #                     (missing_rows['subject'] == subject) & 
+    #                     (missing_rows['session'] == session) & 
+    #                     (missing_rows['event'] == trial_type) & 
+    #                     (missing_rows['channel'] == channel)
+    #                 ]
+                    
+    #                 if not missing_row.empty:
+    #                     print(f"Re-running ERP analysis for subject: {subject}, session: {session}, trial: {trial_type}, channel: {channel}")
+                        
+    #                     # Load the evoked data and epochs for the current entry
+    #                     evoked = mne.read_evokeds(entry['data'], condition=0)
+    #                     evoked_subset = evoked.copy().pick(channel)
+    #                     epochs = mne.read_epochs(f"{manage.root_folder}/{subject}/{session}/eeg/{subject}_{session}_{trial_type}_ar_clean_{task}-epo.fif")
+                        
+    #                     # Re-run ERP analysis for manual checking
+    #                     erp_data = analysis.erp_analysis(
+    #                         evoked_subset, epochs, params, auto=False, verbose=False, 
+    #                         master_erp_df=pd.DataFrame(), plot=plot, subject=subject, 
+    #                         session=session, group=response, event=trial_type, 
+    #                         channel=channel, results_folder=None, exp_folder=None
+    #                     )
+                        
+    #                     # Update the original dataframe with the new ERP data
+    #                     dataframe.update(erp_data)
+        
+    #     return dataframe
+    
     def calculate_psd(self, epochs, subjectname, fminmax=[1,50], method='welch', window='hamming',
                     window_duration=2, window_overlap=0.5, zero_padding=3, tminmax=[None, None],
                     verbose=False, plot=True):
@@ -1116,7 +1190,7 @@ class PylineAnalysis:
         for trial_type in trial_types:
             # Fetch BIDS data for the current trial type
             bids = manage.get_bids(extensions=[f'{trial_type}{evoked_file_extension}'], str_to_extract=['AO'], modalities=['eeg'])
-            manage.add_classifier(bids, response_status)
+            manage.add_classifier(bids, response_status, designation =[1, 0])
             
             for session in sessions:
                 # Filter bids data by session
@@ -1163,10 +1237,28 @@ class PylineAnalysis:
             'master_grand_evoked_times_nonresp': master_grand_evoked_times_nonresp
         }
     
-    def calculate_complexity(self, manage, trial_types, response_status, channels = None, epoch_file_extension = None, str_to_extract = None):
-    
+    def calculate_complexity(self, manage, trial_types, response_status, channels = None, epoch_file_extension = None, str_to_extract = None, function=None, **function_kwargs):
+        """
+        Calculate a signal complexity metric (e.g., entropy or fractal dimension) on EEG epochs.
+
+        Parameters:
+        - manage (object): Object for managing BIDS data paths and loading.
+        - trial_types (list of str): Trial types to evaluate (e.g., ['AX-target', 'BX-target']).
+        - response_status (list): Classifier labels (e.g., [1, 0]) to assign responders/non-responders.
+        - channels (list of str): EEG channels to compute the complexity measure on.
+        - epoch_file_extension (str): File extension suffix for identifying relevant epoch files.
+        - str_to_extract (str): Optional string for filtering specific trials.
+        - function (callable): A function that takes a 1D NumPy array and returns a scalar complexity value (e.g., nk.entropy_sample).
+
+        Returns:
+        - df (pd.DataFrame): Summary dataframe (1 row per subject/session/trial type) with averaged complexity across channels.
+        - df_exp_channels (pd.DataFrame): Detailed dataframe with complexity per channel for each subject/session/trial type.
+        """
         if channels is None:
             raise ValueError("Must specify list of channels")
+        if function is None or not callable(function):
+            raise ValueError("You must provide a valid function to calculate complexity (e.g., nk.entropy_sample).")
+
         
         # Initialise dataframes
         df = pd.DataFrame()
@@ -1203,31 +1295,35 @@ class PylineAnalysis:
                 # Convert data file to dataframe 
                 df_epochs = epochs.to_data_frame()
                 
-                # Calculate Lempel-Ziv Complexity
-                sampen_values = []
-                # fractal_nld = []
+                # Calculate Complexity
+                complexity_values = []
+
                 for ch in channels:
-                    sampen_ch = []
-                    # fractal_nld_ch = []
+                    ch_values = []
+
                     for epo in df_epochs['epoch'].unique():
-                        epo_signal = df_epochs[df_epochs['epoch'] == epo][ch]
+                        signal = df_epochs[df_epochs['epoch'] == epo][ch].to_numpy()
 
-                        # Calculate sample and fractal entropy
-                        sampen, _ = nk.entropy_sample(epo_signal.to_numpy(), delay=1, dimension=2)
-                        # fd, _ = nk.fractal_nld(epo_signal, corrected=False)
+                        try:
+                            # Call user-defined or imported function
+                            value = function(signal, **function_kwargs)
+                            # If function returns a tuple, take only the first value
+                            if isinstance(value, (tuple, list)):
+                                value = value[0]
+                        except Exception as e:
+                            print(f"Error in function {function.__name__} for channel {ch}, epoch {epo}: {e}")
+                            value = np.nan
+                        
+                        ch_values.append(value)
 
-                        sampen_ch.append(sampen)
-                        # fractal_nld_ch.append(fd)
-
-                    # Add channel values dataframe
-                    df_exp_channels.loc[i, ch] = np.mean(sampen_ch)
+                    # Average complexity across epochs for this channel
+                    df_exp_channels.loc[i, ch] = np.mean(ch_values)
                     
                     # Store average values
-                    sampen_values.append(np.mean(sampen_ch))
+                    complexity_values.append(np.mean(ch_values))
                 
-                # Average all the channels' LZC values to get a single value for the subject & add to master dataframe
-                sampen_mean = np.mean(sampen_values)
-                df_exp.loc[i, 'sampen'] = sampen_mean
+                # Store subject-level average across selected channels
+                df_exp.loc[i, 'complexity'] = np.mean(complexity_values)
 
         # Add the current timepoint data to the master dataframe
         df = pd.concat([df, df_exp])

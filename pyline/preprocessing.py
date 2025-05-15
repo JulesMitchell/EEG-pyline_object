@@ -2,248 +2,248 @@
 import mne, os, warnings
 import pandas as pd
 import numpy as np
-from autoreject import (get_rejection_threshold, AutoReject)
+from autoreject import get_rejection_threshold, AutoReject
+from matplotlib import pyplot as plt 
 from mne.preprocessing import ICA
 
 from . import PylineData
 
+## Issues Log: Need to check figure plotting saves with correct name and location. 
+
 class PylinePreprocessing:
+    """
+    Class for performing standard EEG preprocessing steps, including:
+    - Signal Space Projection (SSP) for artifact removal
+    - Independent Component Analysis (ICA)
+    - Filtering (band-pass, notch)
+    - Resampling
+    - Current Source Density (CSD) transformation
+    - Cropping based on events
+
+    Methods should be applied to a PylineData object containing raw EEG data.
+    """
+
     def __init__(self):
+        """Initialize PylinePreprocessing object."""
+        pass
+
+    def ssp(self, data, params, verbose=False): 
         """
-        Initialize the EEGPreprocessing object.
+        Apply Signal Space Projection (SSP) for EOG artifact removal.
 
         Parameters:
-        - 
+        - data (PylineData): EEG data container.
+        - params (PylineParameters): Parameters including EOG channels and referencing.
+        - verbose (bool): Print detailed progress if True.
         """
+        if verbose: print('---\nAPPLYING SSP FOR EOG-REMOVAL\n')
 
-    """
-    Transformations of the data.
-    
-        Functions:
-        - resample ()
-        - filter ()
-        - csd ()
-        - pyline ()
-    
-    """
-    def ssp (self, data, params, verbose = False): 
-            
-        if verbose==True: print('---\nAPPLYING SSP FOR EOG-REMOVAL\n')
+        data_copy = data.copy()
 
-        eog_projs, _ = mne.preprocessing.compute_proj_eog(data.raw,n_grad=0,n_mag=0,n_eeg=1,reject=None,
-                                                        no_proj=True,ch_name=params.eog_channels,verbose=verbose)
-        data.raw.add_proj(eog_projs,remove_existing=False)
-        data.raw.apply_proj()
+        # Compute SSP projections from EOG channels
+        eog_projs, _ = mne.preprocessing.compute_proj_eog(
+            data_copy, n_grad=0, n_mag=0, n_eeg=1,
+            reject=None, no_proj=True,
+            ch_name=params.eog_channels,
+            verbose=verbose
+        )
+
+        # Apply projections to raw data
+        data_copy.add_proj(eog_projs, remove_existing=False)
+        data_copy.apply_proj()
+
+        # Drop EOG channels after projection
         if params.reference == 'mastoids':
-            # Assuming params.eog_channels is a list of channel names
             eog_channels = [x for x in params.eog_channels if x not in ['EXG1', 'EXG2']]
-            data.raw.drop_channels(eog_channels)
+            data_copy.load_data().drop_channels(eog_channels)
         else:
-            data.raw.drop_channels(params.eog_channels)
+            data_copy.load_data().drop_channels(params.eog_channels)
+        
+        return data_copy
 
-    def ica (self, data, n_components = 32, method = 'fastica', plot = False, autoselect = False):
-        """ """
-        
-        filt_raw = data.raw.copy().filter(l_freq=1.0, h_freq=30)
-
-        ica = ICA(n_components=n_components, method= method, random_state=23)
-        
-        ica.fit(filt_raw)
-        
-        if plot:
-            ica.plot_components()
-            ica.plot_sources(data.raw, show_scrollbars=False)
-        
-        if autoselect: 
-            eog_indices = ica.find_bads_eog(data.raw)
-            ica.exclude = eog_indices[0]
-            ica.apply(data.raw)
-        
-        data.ica = ica
-        return data
-    
-    def resample(self, data, events, sfreq = None):
+    def ica(self, data, n_components=32, method='fastica', plot=False, autoselect=False):
         """
-        Resample raw EEG data.
+        Apply ICA to EEG data for artifact rejection.
 
         Parameters:
-        - raw_data (mne.io.Raw): Raw EEG data to filter.
+        - data (PylineData): EEG data container.
+        - n_components (int): Number of ICA components.
+        - method (str): ICA method, e.g., 'fastica'.
+        - plot (bool): Plot components and sources if True.
+        - autoselect (bool): Automatically find and exclude EOG components if True.
 
         Returns:
-        - filtered_data (mne.io.Raw): Filtered raw EEG data.
+        - data (PylineData): Updated with fitted ICA object.
+        - ica: ICA object
         """
-        # if data.raw is None:  
-        #     raise ValueError("No raw data file in data object")
-        
+        # Create a filtered copy for ICA fitting
+        data_copy = data.copy()
+        filt_raw = data.copy().filter(l_freq=1.0, h_freq=30)
+
+        # Fit ICA model
+        ica = ICA(n_components=n_components, method=method, random_state=23)
+        ica.fit(filt_raw)
+
+        if plot:
+            ica.plot_components()
+            ica.plot_sources(data, show_scrollbars=False)
+
+        # Auto-exclude EOG components if specified
+        if autoselect:
+            eog_indices = ica.find_bads_eog(data_copy)
+            ica.exclude = eog_indices[0]
+            ica.apply(data_copy)
+
+        return ica, data_copy
+
+    def resample(self, data, events, sfreq=None):
+        """
+        Resample EEG data to a new sampling frequency.
+
+        Parameters:
+        - data (PylineData): EEG data container.
+        - events (ndarray): MNE-formatted events array.
+        - sfreq (int): Desired sampling frequency.
+
+        Returns:
+        - resampled_data (Raw): Resampled raw EEG data.
+        """
         if sfreq is None or not isinstance(sfreq, int):  
             raise ValueError("Sampling frequency must be specified as integer")
 
-        # if data.ica is not None:
-        #     print("Resampling ica data file")
-        resampled_data, updated_events = data.copy().resample(sfreq=sfreq, events = events)
-        # else:
-        #     print("Resampling raw data file")
-        #     resampled_data, updated_events = data.raw.copy().resample(sfreq=sfreq, events = events)
-            
-        print("Updating data object") 
-        # data.resampled = resampled_data
-        data.events = updated_events
-        return resampled_data
-    
-    def filter(self, data, params, plot= False, savefig=False, verbose = False):
+        # Resample and update event timings
+        resampled_data, updated_events = data.copy().resample(sfreq=sfreq, events=events)
+
+        return resampled_data, updated_events
+
+    def filter(self, data, params, plot=False, savefig=False, verbose=False):
         """
-        Filter raw EEG data.
+        Apply band-pass and optional notch filtering to EEG data.
 
         Parameters:
-        - raw_data (mne.io.Raw): Raw EEG data to filter.
-        - filter_design: A dictionary of all the filter parameters (see MNE raw.filter or create_filter functions)
-        - line_remove (optional): A boolean whether to remove power-line noise (50Hz) with a Notch filter or not
-        - eog_channels (optional): A boolean whether to remove EOG noise or not, requires list of EOG channels
-        - plot_filter (optional): A boolean whether to plot the band-pass filter
-        - savefig (optional): A boolean whether to save the filter design
+        - data (Raw): Raw EEG data.
+        - params (PylineParameters): Parameters containing filter settings.
+        - plot (bool): Plot filter response.
+        - savefig (bool): Save filter response plot.
+        - verbose (bool): Show MNE messages.
 
         Returns:
-        - filtered_data (mne.io.Raw): Filtered raw EEG data.
+        - filtered_data (Raw): Filtered EEG data.
         """
-        #filtered_data =  data.filter(self.filter_design)
         if data is None:  
             raise ValueError("No data file saved in data object passed")
-        
-        # if data.filtered is not None:  
-        #     raise ValueError("Filtered data already exists in data object. Pass non-filtered data.")
-        
-        # if data.ica is None: 
+
         print('---\nAPPLYING FILTER\n')
         filtered_data = data.copy().filter(**params.filter_design, verbose=verbose)
-        print("Updating data object")
-        
-        if plot == True: # Review and fix where data.raw and data.resampled are passed
-            temp_params = params.filter_design
-            temp_params.pop('n_jobs')
-            temp_params.pop('pad')
-            filter_params = mne.filter.create_filter(data.raw.get_data(),data.resampled.info['sfreq'],**temp_params)
-            
-            freq_ideal = [0,params.filter_design['l_freq'],params.filter_design['l_freq'],
-                        params.filter_design['h_freq'],params.filter_design['h_freq'],data.resampled.info['sfreq']/2]
+
+        if plot:
+            temp_params = params.filter_design.copy()
+            temp_params.pop('n_jobs', None)
+            temp_params.pop('pad', None)
+            filter_params = mne.filter.create_filter(
+                data.get_data(), data.info['sfreq'], **temp_params
+            )
+
+            freq_ideal = [0, params.filter_design['l_freq'], params.filter_design['l_freq'],
+                          params.filter_design['h_freq'], params.filter_design['h_freq'],
+                          data.info['sfreq'] / 2]
             gain_ideal = [0, 0, 1, 1, 0, 0]
 
-            fig, axs = plt.subplots(nrows=3,figsize=(8,8),layout='tight',dpi=100)
-            mne.viz.misc.plot_filter(filter_params,data.resampled.info['sfreq'],freq=freq_ideal,gain=gain_ideal,
-                                    fscale='log',flim=(0.01, 80),dlim=(0,6),axes=axs,show=False)
-            if savefig == True:
-                plt.savefig(fname='Data/filter_design.png',dpi=300)
+            fig, axs = plt.subplots(nrows=3, figsize=(8, 8), layout='tight', dpi=100)
+            mne.viz.misc.plot_filter(filter_params, data.info['sfreq'],
+                                     freq=freq_ideal, gain=gain_ideal, fscale='log',
+                                     flim=(0.01, 80), dlim=(0, 6), axes=axs, show=False)
+            if savefig:
+                plt.savefig(fname='Data/filter_design.png', dpi=300)
             plt.show()
 
-        if params.line_noise != None:
-            if verbose==True: print('---\nAPPLYING NOTCH FILTER\n')
-            filtered_data = filtered_data.filtered.notch_filter([params.line_noise])
+        # Optional notch filtering for powerline noise
+        if params.line_noise is not None:
+            if verbose: print('---\nAPPLYING NOTCH FILTER\n')
+            filtered_data = filtered_data.notch_filter([params.line_noise])
 
-            # print("Filtering resampled data file")
-            # filtered_data = prep.filter_raw_data(data.resampled, eeg_params.filter_design, line_remove=None, eog_channels= eeg_params.eog_channels if ssp_projection else None,
-            # plot_filt=plot, savefig=savefig, verbose = verbose)
-        #else:
-        #     print("Filtering resampled data file")
-        #     filtered_data = prep.filter_raw_data(data.ica, eeg_params.filter_design, line_remove=None, eog_channels= eeg_params.eog_channels if ssp_projection else None, 
-		# 	plot_filt=plot, savefig=savefig, verbose = verbose)
-
-        print("Updating data object")    
         return filtered_data
-    
-    def csd(self, data): # update description
+
+    def csd(self, data):
         """
-        Find events in raw EEG data.
+        Apply Current Source Density (CSD) transformation to EEG data.
 
         Parameters:
-        - raw_data (mne.io.Raw): Raw EEG data.
+        - data (Raw): EEG data (Raw).
 
         Returns:
-        - events (ndarray): Array containing event onsets.
+        - None (updates data.csd in place)
         """
-        # if data.raw is None:  
-        #     raise ValueError("No raw data file in data object")
-        
-        # if data.csd is not None:  
-        #     raise ValueError("CSD data already exists in data object.")
-        
-        # if data.resampled is None and data.filtered is None:  
-        #     print("Computing CSD for raw data file")
-        #     csd_data = mne.preprocessing.compute_current_source_density(data.raw)
-        # elif data.resampled is None:
-        #     print("Computing CSD for filtered data file")
-        #     csd_data = mne.preprocessing.compute_current_source_density(data.filtered)
-        # else:
-        #     print("Computing CSD for resampled data file")
         csd_data = mne.preprocessing.compute_current_source_density(data)
-
         print("Updating data object") 
-        # data.csd = csd_data
+
         return csd_data
-    
-    def crop(self, data, params):
+
+    def crop(self, data, events, params): # 15.05.2025 - Needs adjustment to accept any mne data object. 
         """
-        Crop the EEG signal based on event markers.
+        Crop EEG data based on detected event markers.
 
         Parameters:
-        raw : mne.io.Raw
-            The raw EEG data.
-        stimulus_channel : str
-            The name of the stimulus channel used to find events.
-        subject_name : str
-            The name of the subject for warning messages.
+        - data (MNE-object): EEG data.
+        - events (numpy array): event array to drop around (for resting state)
+        - params (PylineParameters): Parameters including stimulus channel.
 
         Returns:
-        cropped_raw : mne.io.Raw
-            The cropped EEG data.
+        - cropped_raw (Raw): Cropped EEG data.
         """
-
-        # Initialize variables
         tminmax = None
-        
-        # Process events and determine cropping boundaries
-        if len(data.events) >= 3:
-            tminmax = [data.events[0][0] / data.raw.info['sfreq'], data.events[-1][0] / data.raw.info['sfreq']]
-            # Warn if there are more than 3 events
-            if len(data.events) > 3:
-                warnings.warn('\nMore than 3 event points found for {}\n'.format(data.filename))
-        elif len(data.events) == 1 or len(data.events) == 2:
-            warnings.warn('\nOnly 1 or 2 event point(s) found for {}\n'.format(data.filename))
-            
-            if data.events[0][0] > 100000:
-                tminmax = [0, data.events[0][0] / data.raw.info['sfreq']]
+
+        if len(events) >= 3:
+            tminmax = [events[0][0] / data.info['sfreq'], events[-1][0] / data.info['sfreq']]
+            if len(events) > 3:
+                warnings.warn('\nMore than 3 event points found for {}\n'.format(data.filenames))
+        elif len(events) in [1, 2]:
+            warnings.warn('\nOnly 1 or 2 event point(s) found for {}\n'.format(data.filenames))
+            if events[0][0] > 100000:
+                tminmax = [0, events[0][0] / data.info['sfreq']]
             else:
-                tminmax = [data.events[0][0] / data.raw.info['sfreq'], None]
+                tminmax = [events[0][0] / data.info['sfreq'], None]
         else:
-            warnings.warn('\nNO event points found for {}\n'.format(data.filename))
-        
-        # Crop the raw data based on the event markers
+            warnings.warn('\nNO event points found for {}\n'.format(data.filenames))
+
+        # Apply cropping
         if tminmax is not None:
-            cropped_raw = data.raw.crop(tmin=tminmax[0], tmax=tminmax[1])
+            cropped_raw = data.copy().crop(tmin=tminmax[0], tmax=tminmax[1])
             print(('Event markers are following:\n{}\nStarting point: {} s\nEnding point: {} s\n'
-                'Total duration: {} s').format(data.events, tminmax[0], tminmax[1], tminmax[1] - tminmax[0]))
-            
-            # Warn if the signal length is not within the expected range
+                   'Total duration: {} s').format(events, tminmax[0], tminmax[1], tminmax[1] - tminmax[0]))
+
             if not (230 <= (tminmax[1] - tminmax[0]) <= 250):
-                warnings.warn('\nRaw signal length is not between 230-250s for {}\n'.format(data.filename))
+                warnings.warn('\nRaw signal length is not between 230-250s for {}\n'.format(data.filenames))
         else:
             print('Signal NOT cropped.')
+            cropped_raw = data
 
-        # Drop the stimulus channel
+        # Drop stimulus channel from cropped data
         cropped_raw = cropped_raw.drop_channels(params.stimulus_channel)
-        
         return cropped_raw
 
-    def pyline(self, data, params, manage, analysis, tasktype = None, ssp_projection = True, sfreq=None, plot=False, savefig=False, verbose=False):
+    
+    # 14.05.2025 - Re-structered pyline to choice processing option based on tasktype stored in data. Also, only ICA/SSP, re-sampling and filtering done.
+
+    def pyline(self, data, params, manage, analysis, tasktype, ssp_projection = True, sfreq=None, plot=False, savefig=False, savecsv=False,verbose=False):
         """
-        Preprocess raw EEG data using automatic settings.
+        Main entry point for preprocessing EEG data.
 
         Parameters:
-        - data (object): The data object containing raw EEG data and events.
-        - params (object): Parameters object containing EEG parameters and ICA settings.
-        - ssp_projection (bool): Whether to apply SSP projection.
-        - sfreq (int, optional): Sampling frequency.
-        - plot (bool): Whether to plot the preprocessed data.
-        - savefig (bool): Whether to save the plots.
-        - verbose (bool): Whether to print verbose output.
+        - data (list): List of dictionaries with subject/session/task EEG data paths and metadata.
+        - params (object): Configuration object with keys such as `ica`, `event_dict`, and preprocessing parameters.
+        - manage (object): Handles paths and data loading (e.g., manage.load_eeg()).
+        - analysis (object): Provides export and evoked-related methods.
+        - tasktype (str): 'resting' or 'task'.
+        - ssp_projection (bool): If True, apply SSP projection (if ICA not used).
+        - sfreq (int or None): Desired sampling frequency (e.g., 250 Hz).
+        - plot (bool): Whether to display plots.
+        - savefig (bool): Whether to save figures.
+        - savecsv (bool): Whether to save .csv outputs.
+        - verbose (bool): Print progress and warnings.
+
+        Returns:
+            - None
         """
         # Validate input types
         if not isinstance(params, object):
@@ -275,10 +275,13 @@ class PylinePreprocessing:
             raise ValueError(f"Unsupported condition type: {tasktype}. Add separate function to object EEGprocessing code.")
 
         # Call the condition-specific method with all relevant parameters
-        return condition_specific_code[tasktype](data, params, manage, analysis, tasktype, ssp_projection, sfreq, plot, savefig, verbose)
+        return condition_specific_code[tasktype](data, params, manage, analysis, tasktype, ssp_projection, sfreq, plot, savefig, savecsv, verbose)
 
-    def _pyline_resting(self, data, params, manage, analysis, tasktype, ssp_projection, sfreq, plot, savefig, verbose):
-        
+    def _pyline_resting(self, data, params, manage, analysis, tasktype, ssp_projection, sfreq, plot, savefig, savecsv, verbose):
+        """
+        Resting-state EEG preprocessing pipeline.
+        Steps: Load → Crop → ICA/SSP → Filter → Resample → Epoch → Reject → Export
+        """
         for entry in data:
 
             # Set filenames, output directory, and create data object passing params, filename and task identifiers.
@@ -292,28 +295,37 @@ class PylinePreprocessing:
 
             # Find events, crop data, apply either ICA or SSP to remove major (repetitive) artifacts, then resample and/or filter
             if params.ica['use']:
-                self.events_finder(data, params)
+                events = self.events_finder(data.raw, params)
+                data.events = events
 
-                data.raw = self.crop(data, params)
+                try:
+                    data.raw = self.crop(data.raw, params)
+                except Exception as e:
+                    print(f"Warning: Error cropping resting data: {e}. If this is a preprocessed file then cropping has potentially already been done.")
 
                 ica_kwargs = {k: v for k, v in params.ica.items() if k != 'use'}
-                self.ica(data, **ica_kwargs) # Automated ICA rejection applied in arguments
-
+                data.raw = self.ica(data.raw, **ica_kwargs) # Automated ICA rejection applied in arguments
+                
             elif ssp_projection:
-                self.events_finder(data, params)
+                events = self.events_finder(data.raw, params)
+                data.events = events
 
-                data.raw = self.crop(data, params)
+                try:
+                    data.raw = self.crop(data.raw, params)
+                except Exception as e:
+                    print(f"Warning: Error cropping resting data: {e}. If this is a preprocessed file then cropping has potentially already been done.")
 
-                self.ssp(data, params, verbose=verbose)
+                data.raw = self.ssp(data.raw, params, verbose=verbose)
 
             if sfreq == None:
                 data.filtered = self.filter(data.raw, params, plot, savefig, verbose)
 
             else:
-                data.resampled = self.resample(data.raw, data.events, sfreq=sfreq)
+                data.resampled, data.events = self.resample(data.raw, data.events, sfreq=sfreq) # resample returns a tuple with resampled data and updated events.
 
                 data.filtered = self.filter(data.resampled, params, plot, savefig, verbose)
                     
+            # 14.05.2025 - Potentially remove this and only have the artifact removal, filter, and resample.
             epochs = self.create_epochs(data.filtered, params, tasktype='resting', epo_duration=5)
 
             ar_epochs = self.reject_auto(epochs)
@@ -322,13 +334,21 @@ class PylinePreprocessing:
 
         return
 
-    def _pyline_task(self, data, params, manage, analysis, tasktype, ssp_projection, plot, savefig, verbose):
+    # 14.05.2025 - sfreq added but not used. If you want to downsample, refer to the MNE-tutorials on the best approach.
+    def _pyline_task(self, data, params, manage, analysis, tasktype, ssp_projection, sfreq, plot, savefig, savecsv, verbose):
+        """
+        Task-based EEG preprocessing pipeline for paradigms like AX-CPT or AO.
+        Includes event splitting, epoching by condition, artifact rejection, and evoked response generation.
+        """
+        # 14.05.2025 - Removed AX-cue, AB-cue and BX-cue
         if data[0]['task'] == 'AXCPT':
-            processing_data = pd.DataFrame(columns=['Subject', 'Group', 'Timepoint', 'Task', 'Time', "AX-cue", "AX-target", "AB-cue", "AB-target", "BX-cue", "BX-target", "AX-cue_ar", "AX-target_ar", "AB-cue_ar", "AB-target_ar", "BX-cue_ar", "BX-target_ar"]) 
+            processing_data = pd.DataFrame(columns=['Subject', 'Group', 'Timepoint', 'Task', 'Time', "AX-target", "AB-target", "BX-target", "AX-target_ar", "AB-target_ar", "BX-target_ar"]) 
         elif data[0]['task'] == 'AO':
             processing_data = pd.DataFrame(columns=['Subject', 'Group', 'Timepoint', 'Task', 'Time', "Standard", "Target", "Standard_ar", "Target_ar"]) 
 
         trial_outcomes = pd.DataFrame()
+
+        counter = 0
 
         for entry in data:
 
@@ -341,35 +361,39 @@ class PylinePreprocessing:
             paradigm = entry['task']
             params.picks = mne.pick_types(data.raw.info, eeg=True, stim=False) # add picks to params
 
+            processing_data.loc[entry['subject']] = {'Subject': entry['subject'], 'Group': entry['group'], 'Timepoint': entry['session'], 'Task': entry['task'], 'Time': int(data.raw.info['meas_date'].strftime('%H%M'))}
+
+
             # Code specific to task data
             if params.ica['use']:
-                self.events_finder(data, params)
+                events = self.events_finder(data.raw, params)
+                data.events = events
 
                 ica_kwargs = {k: v for k, v in params.ica.items() if k != 'use'}
-                self.ica(data, **ica_kwargs) # Automated ICA rejection applied in arguments
+                data.raw = self.ica(data, **ica_kwargs) # Automated ICA rejection applied in arguments
             
             elif ssp_projection:
-                self.events_finder(data, params)
-                self.ssp(data, params, verbose=verbose)
+                events = self.events_finder(data.raw, params)
+                data.events = events
+
+                data.raw = self.ssp(data.raw, params, verbose=verbose)
             
             data.filtered = self.filter(data.raw, params, plot, savefig, verbose)
 
             # Split the events into the respective categories for each task
-            AX_cue, AX_target, AB_cue, AB_target, BX_cue, BX_target, background_AX, background_A = self.split_events(data, params, task="AXCPT")
+            AX_cue, AX_target, AB_cue, AB_target, BX_cue, BX_target, background_AX, background_A = self.split_events(data.events, params, task="AXCPT")
 
-            # Create event dictionary for creating epochs (you can include activity preceding an AX or A if desired)
+            # Create event dictionary for creating epochs (modify to include those of interest)
+            # 14.05.2025 - Need to either add in AO event dict or remove AO option from this code for upload
             event_dict = {
-            "AX-cue": [AX_cue, {'AX-cue': 4}],
-            "AB-cue": [AB_cue,{'A*-cue': 4}],
-            "BX-cue": [BX_cue, {'BX-cue': 8}],
             "AX-target": [AX_target,{'AX-target': 2}],
             "AB-target": [AB_target, {'A*-target': 8}],
             "BX-target": [BX_target,{'BX-target': 6}]
             }
             
             epoch_dict = {} # Initialize an empty dictionary to store epoch variables
+            
             # Epoch around events of interest for each task, passing the data.filtered 
-
             for key, value in event_dict.items(): # Iterate over the dictionary items and create epochs
                 epochs = self.create_epochs(data.filtered, params, tasktype='task', 
                                                 events = value[0], event_id = value[1],
@@ -378,8 +402,8 @@ class PylinePreprocessing:
                                                 plot=False)
                 epoch_dict[key] = epochs
 
-                # Add number of cleaned epochs to processing dataframe 
-                processing_data.loc[entry, key] = len(epochs)
+                # Add number of epochs to processing dataframe 
+                processing_data.loc[entry['subject'], key] = len(epochs)
 
             # # Process epochs with autoreject, define dictionary of processed epochs for creating evoked objects
             ar_dict = {}
@@ -388,8 +412,14 @@ class PylinePreprocessing:
                 # Perform autoreject on each epoch object in dictionary
                 ar = self.reject_auto(value, plot=False)
 
-                # Update dictionary with processed epochs
-                ar_dict[f"{key}_ar"] = ar
+                # Update dictionary with processed epochs (ar is a tuple, so must index variable)
+                ar_dict[f"{key}_ar"] = ar[0]
+
+                # Add number of cleaned epochs to processing dataframe 
+                processing_data.loc[entry['subject'], f"{key}_ar"] = len(epochs)
+
+                # Save reject log (ar is a tuple, so must index variable)
+                ar[1].save(fname=output_path/f"{filename}_{key}_clean_{paradigm}_autorejectlog.npz", overwrite=True)
 
             # Determine the lowest number of epochs across conditions so epochs can be made the same. This makes the SNR comparable across trials.
             epoch_lens = []
@@ -399,57 +429,66 @@ class PylinePreprocessing:
 
             minimum_epochs = min(epoch_lens)
 
+            # Add minimum number epochs to processing dataframe for each participant 
+            processing_data.loc[entry['subject'], 'min_epochs_post_ar'] = minimum_epochs
+
             # Use minimum to randomly sample epochs. Export .fif and numpy array for analysis.alpha_reactivity
             for key, value in ar_dict.items():
-                if len(value) > minimum_epochs:
-                    ar_dict[key] = self.select_random_epochs(value, minimum_epochs) 
+                #  Use this if you want to equalise across trials.
+                # if len(value) > minimum_epochs:
+                #     ar_dict[key] = self.select_random_epochs(value, minimum_epochs) 
 
-                analysis.export(ar_dict[key], type='fif', outputdir=output_path, filename=f"{data.filename}_{key}_clean_{paradigm}")
-
-            # # Add number of cleaned epochs to processing dataframe for each participant 
-            processing_data.loc[entry, 'min_epochs_post_ar'] = minimum_epochs
+                analysis.export(ar_dict[key], type='fif', outputdir=output_path, filename=f"{filename}_{key}_clean_{paradigm}")
 
             # Create evoked objects for each trial type. Export for later ERP analysis.
             for key, value in ar_dict.items():
                 evoked = analysis.create_evoked(value)
-                analysis.export(evoked, type='fif', outputdir=output_path, filename=f"{data.filename}_{key}_evoked_{paradigm}")
+                analysis.export(evoked, type='fif', outputdir=output_path, filename=f"{filename}_{key}_evoked_{paradigm}")
 
             # Now, extract relevant processing and task-related data.
-            trial_outcomes= analysis.extract_trial_data(trial_outcomes, data, data, entry, params, task = 'AXCPT')
+            trial_outcomes = analysis.extract_trial_data(trial_outcomes, data, entry, params, task = 'AXCPT')
+
+            counter += 1
             
-        analysis.export(trial_outcomes, type = 'csv', outputdir=manage.analysis_folder, filename=f'{paradigm}_psychomotor')
-        analysis.export(processing_data, type = 'csv', outputdir=manage.analysis_folder, filename=f'{paradigm}_processing_epoch_data') 
+        if savecsv:
+            analysis.export(trial_outcomes, type = 'csv', outputdir=manage.analysis_folder, filename=f'{paradigm}_psychomotor')
+            analysis.export(processing_data, type = 'csv', outputdir=manage.analysis_folder, filename=f'{paradigm}_processing_epoch_data') 
 
         return
 
     def events_finder(self, data, params, plot = False, task = None):
+        # Issue: Needs to not be set as data.raw so user isn't constrained.
         """
         Find events in raw EEG data.
 
         Parameters:
-        - raw_data (mne.io.Raw): Raw EEG data.
+        - raw_data (mne.io.Raw): Pyline Data object
 
         Returns:
         - events (ndarray): Array containing event onsets.
+        
         """
-        events = mne.find_events(data.raw, stim_channel=params.stimulus_channel, consecutive=False, output='onset')
-        data.events = events
+        events = mne.find_events(data, stim_channel=params.stimulus_channel, consecutive=False, output='onset')
 
         if plot:
             if task is None:
                 raise ValueError('tasktype must be specified to plot events')
             fig = mne.viz.plot_events(
-            events, event_id=params.event_dict[task], sfreq=data.raw.info["sfreq"], first_samp=data.raw.first_samp
+            events, event_id=params.event_dict[task], sfreq=data.info["sfreq"], first_samp=data.first_samp
             )
             return events, fig
         else:
             return events
         
-    def split_events(self, data, params, task=None):
+    def split_events(self, events, params, task=None):
+        """
+        Dispatcher for task-specific event splitting logic.
+        """
+
         if task is None:
             raise ValueError("Task type must be specified")
 
-        if data.events is None:
+        if events is None:
             raise ValueError("Events have not been found. Run 'events_finder' first.")
 
         task_specific_code = {
@@ -462,21 +501,33 @@ class PylinePreprocessing:
         if task not in task_specific_code:
             raise ValueError(f"Unsupported task type: {task}. Add separate function to object EEGprocessing code.")
         
-        return task_specific_code[task](data, params)
+        return task_specific_code[task](events, params)
     
-    def split_events_AXCPT(self, data, params):
+    def split_events_AXCPT(self, events, params):
+        """
+        Splits events from the AX-CPT task into different trial types based on cue-target-response sequences.
 
-        AX_cue = [] # AX-cue
-        AX_target = [] # AX-target
-        AB_cue = [] # A*-cue
-        AB_target = [] # A*-target
-        BX_cue = [] # BX-cue
-        BX_target = [] # BX-target
-        background_AX = [] # B preceding AX presentation
-        background_A = [] # B preceding A*presentation
+        Parameters:
+        - data: PylineData object containing EEG data and event information.
+        - params: Configuration object containing the event_dict and button ID.
 
-        for m in range(len(data.events) - 2):
-            cue, target, next_event = data.events[m:m+3]
+        Returns:
+        - Tuple of NumPy arrays for each event category:
+            AX_cue, AX_target: Trials with A cue and X target, followed by a button press.
+            AB_cue, AB_target: Trials with A cue and non-X target, no button press.
+            BX_cue, BX_target: Trials with non-A cue and X target, no button press.
+            background_AX: B events preceding AX sequences.
+            background_A: B events preceding AB sequences.
+        """
+
+        # Initialize event category lists
+        AX_cue, AX_target = [], []
+        AB_cue, AB_target = [], []
+        BX_cue, BX_target = [], []
+        background_AX, background_A = [], []
+
+        for m in range(len(events) - 2):
+            cue, target, next_event = events[m:m+3]
             cue_type, target_type, next_type = cue[2], target[2], next_event[2]
 
             # A-X successful responses
@@ -536,7 +587,17 @@ class PylinePreprocessing:
               AX_cue, AX_target, AB_cue, AB_target, BX_cue, BX_target, background_AX, background_A
         )
     
-    def split_events_AO(self, data, params):
+    def split_events_AO(self, events, params):
+        """
+        Categorizes auditory oddball events based on the number of standard tones preceding a target tone.
+
+        Parameters:
+        - events: variable containing EEG  events.
+        - params: Configuration object with event dictionary.
+
+        Returns:
+        - Tuple of arrays: different standard tone conditions (1, 3, 5, etc.) and button responses.
+        """
 
         # Create an array of target tone events which have been responded with a button press
         standard = []
@@ -551,8 +612,8 @@ class PylinePreprocessing:
         responses.remove(32)
 
         # Iterate through events
-        for m in range(len(data.events) - 1):
-            cue, response = data.events[m:m+2]
+        for m in range(len(events) - 1):
+            cue, response = events[m:m+2]
             cue_type, response_type = cue[2], response[2]
 
             # Check for one and three standard tones preceding target tone
@@ -582,6 +643,23 @@ class PylinePreprocessing:
         )
         
     def create_epochs(self, data, params, tasktype = None, events = None, event_id = None, title = None, epo_duration = None, plot=False):
+        """
+        Creates EEG epochs either for resting-state (fixed length) or task-based (event-locked).
+
+        Parameters:
+        - data (Raw): Raw or filtered EEG data.
+        - params: Parameters object with epoch configs.
+        - tasktype (str): 'resting' or 'task'.
+        - events (array): Event array (only for task-based).
+        - event_id (dict): Event dictionary (only for task-based).
+        - title (str): Title for the plot (only for task-based).
+        - epo_duration (float): Epoch duration in seconds (only for resting).
+        - plot (bool): Whether to show epoch image plots.
+
+        Returns:
+        - epochs (mne.Epochs or mne.EpochsArray): Created epochs.
+        - fig (optional): Epoch plot if `plot=True`.
+        """
 
         if tasktype is None:
                 raise ValueError("Must specify either 'resting' or 'task.")
@@ -605,7 +683,20 @@ class PylinePreprocessing:
         else:
             return epochs
         
-    def reject_auto (self, epochs, method = 'random_search', plot = False):
+    def reject_auto(self, epochs, method = 'random_search', plot = False):
+        """
+        Applies automatic rejection to EEG epochs using MNE's rejection threshold and AutoReject.
+
+        Parameters:
+        - epochs (mne.Epochs): The epochs to clean.
+        - method (str): AutoReject method ('random_search', etc.).
+        - plot (bool): Whether to show rejection logs and plots.
+
+        Returns:
+        - clean_epochs (mne.Epochs): Cleaned EEG epochs.
+        - reject_log: AutoReject's rejection log.
+        """
+        
         if not isinstance(epochs, (mne.epochs.Epochs, mne.epochs.EpochsArray)):
             raise ValueError ("Reject auto function requires epochs. Run create_epochs.")
         reject_criteria = get_rejection_threshold(epochs)
@@ -622,7 +713,7 @@ class PylinePreprocessing:
             reject_log.plot('horizontal')
             clean_epochs.plot_image(title="GFP with AR ")
             
-        return clean_epochs
+        return clean_epochs, reject_log
     
     def select_random_epochs(self, epochs, num_epochs_to_select):
         """
